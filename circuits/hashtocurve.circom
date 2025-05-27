@@ -11,9 +11,9 @@ template elligator2_map()
     signal input fieldElement;
     signal output montgomeryPoint[2];
 
-    var j = 16898;
+    var j = 168698;
     var k = 1;
-    var z = 5;
+    var z = 3;
 
     var exponentiator = ((21888242871839275222246405745257275088548364400416034343698204186575808495617+1)/4); // p+1/4 used due to congruence of F_p with 3mod4
 
@@ -118,34 +118,27 @@ template elligator2_map()
 }
 
 
-// runs expand_message_xmd and hash2field
+// runs hash2field assuming that Poseidon behaves like random oracle
 template hash2field() {
     signal input message;
     signal input dst; // Domain Separation Tag
     signal output fieldElement1;
     signal output fieldElement2;
 
-    // Following RFC 9380's algorithm but using Poseidon2
 
-    // 1. Create b_0 = H(Z_pad || message || l_i_b_str || I2OSP(0, 1) || DST_prime)
-    component hasher0 = Poseidon2(3); // Adjust size as needed
+    component hasher0 = Poseidon2(3); 
     hasher0.inputs[0] <== message;
-    hasher0.inputs[1] <== dst;
-    hasher0.inputs[2] <== 0; // Counter
+    hasher0.inputs[1] <== 0;
+    hasher0.inputs[2] <== dst;
 
-    // 2. Create b_1 = H(b_0 || I2OSP(1, 1) || DST_prime)
-    component hasher1 = Poseidon2(2);
-    hasher1.inputs[0] <== hasher0.outputs[0];
+
+    component hasher1 = Poseidon2(3);
+    hasher1.inputs[0] <== hasher0.out;
     hasher1.inputs[1] <== 1; // Counter
+    hasher1.inputs[2] <== dst;
 
-    // 3. Create b_2 = H(b_0 || I2OSP(2, 1) || DST_prime)
-    component hasher2 = Poseidon2(2);
-    hasher2.inputs[0] <== hasher0.out;
-    hasher2.inputs[1] <== 2; // Counter
-
-    // Use b_1 and b_2 as the two field elements (proper per RFC)
-    fieldElement1 <== hasher1.out;
-    fieldElement2 <== hasher2.out;
+    fieldElement1 <== hasher0.out;
+    fieldElement2 <== hasher1.out;
 }
 
 template hash2curve()

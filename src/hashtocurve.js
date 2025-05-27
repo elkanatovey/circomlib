@@ -1,17 +1,17 @@
 // hashtocurve.js
-const { buildPoseidon, babyJub } = require("circomlibjs");
 const { ZqField } = require("ffjavascript");
+const babyJub = require("./babyjub");
+const poseidon = require("./poseidon2");
 
-const j = 16898n;
-const k = 1n;
-const z = 5n;
+
+const j = 168698;
+const k = 1;
+const z = 3;
 
 async function hash2field(message, dst) {
-  const poseidon = await buildPoseidon();
-  const b0 = poseidon([message, dst, 0n]);
+  const b0 = poseidon([message, 0, dst]);
   const b1 = poseidon([b0, 1n]);
-  const b2 = poseidon([b0, 2n]);
-  return [b1, b2];
+  return [b0, b1];
 }
 
 function elligator2Map(u) {
