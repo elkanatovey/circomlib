@@ -9,6 +9,7 @@ const h2c = require("../src/hashtocurve.js");
 
 describe("Poseidon Circuit test", function () {
     let circuith2f;
+    let circuitElligator;
 
     this.timeout(100000);
 
@@ -18,6 +19,9 @@ describe("Poseidon Circuit test", function () {
         circuith2f = new snarkjs.Circuit(circuith2fDef);
 
 
+        // Compile the elligator2_map test circuit
+        const circuitElligatorDef = await compiler(path.join(__dirname, "circuits", "elligator2_map_test.circom"));
+        circuitElligator = new snarkjs.Circuit(circuitElligatorDef);
     });
 
     it("hash2field circuit", async () => {
@@ -43,4 +47,31 @@ describe("Poseidon Circuit test", function () {
             jsResult.fieldElement2.toString());
     });
 
+    it("elligator2_map circuit", async () => {
+        // Test input field element
+        const fieldElement = "12345678901234567890";
+        
+        // Calculate curve point using JavaScript implementation
+        const jsResult = h2c.elligator2Map(fieldElement);
+        
+        // Run the circuit with the same input
+        const witness = circuitElligator.calculateWitness({
+            fieldElement: fieldElement
+        });
+        
+        // Check that circuit execution was successful
+        assert(circuitElligator.checkWitness(witness));
+        
+        // Compare circuit outputs with JavaScript implementation for x-coordinate
+        assert.equal(
+            witness[circuitElligator.getSignalIdx("main.montgomeryPoint[0]")].toString(), 
+            jsResult.x.toString()
+        );
+        
+        // Compare circuit outputs with JavaScript implementation for y-coordinate
+        assert.equal(
+            witness[circuitElligator.getSignalIdx("main.montgomeryPoint[1]")].toString(), 
+            jsResult.y.toString()
+        );
+    });
 });
