@@ -8,10 +8,10 @@ const j = 168698;
 const k = 1;
 const z = 3;
 
-async function hash2field(message, dst) {
-  const b0 = poseidon([message, 0, dst]);
-  const b1 = poseidon([b0, 1n]);
-  return [b0, b1];
+function hash2field(message, dst) {
+  const fieldElement1 = poseidon([message, 0, dst]);
+  const fieldElement2 = poseidon([fieldElement1, 1, dst]);
+  return {fieldElement1, fieldElement2};
 }
 
 function elligator2Map(u) {
@@ -69,7 +69,7 @@ function elligator2Map(u) {
 }
 
 async function hash2curve(message, dst) {
-  const [u1, u2] = await hash2field(message, dst);
+  const [u1, u2] = hash2field(message, dst);
   const P1 = elligator2Map(u1);
   const P2 = elligator2Map(u2);
 
