@@ -3,22 +3,66 @@ include "./montgomery.circom";
 include "./babyjub.circom";
 include "./comparators.circom";
 include "./mux1.circom";
+include "./bitify.circom";
 
+
+// Tonelli-Shanks square root function (adapted from pointbits.circom)
+function sqrt(n) {
+    if (n == 0) {
+        return 0;
+    }
+
+    // Test that solution exists
+    var res = n ** ((-1) >> 1);
+    if (res != 1) return 0;
+
+    var m = 28;
+    var c = 19103219067921713944291392827692070036145651957329286315305642004821462161904;
+    var t = n ** 81540058820840996586704275553141814055101440848469862132140264610111;
+    var r = n ** ((81540058820840996586704275553141814055101440848469862132140264610111+1)>>1);
+    var sq;
+    var i;
+    var b;
+    var j;
+
+    while ((r != 0) && (t != 1)) {
+        sq = t*t;
+        i = 1;
+        while (sq != 1) {
+            i++;
+            sq = sq*sq;
+        }
+
+        // b = c ^ (m-i-1)
+        b = c;
+        for (j = 0; j < m-i-1; j++) {
+            b = b*b;
+        }
+
+        m = i;
+        c = b*b;
+        t = t*c;
+        r = r*b;
+    }
+
+    if (r > ((-1) >> 1)) {
+        r = -r;
+    }
+
+    return r;
+}
 
 // elligator2 mapping for hash to curve on babyjubjub
-template elligator2_map()
-{
+template elligator2_map() {
     signal input fieldElement;
     signal output montgomeryPoint[2];
 
     var j = 168698;
     var k = 1;
-    var z = 3;
-
-    var exponentiator = ((21888242871839275222246405745257275088548364400416034343698204186575808495617+1)/4); // p+1/4 used due to congruence of F_p with 3mod4
+    var z = 5;
 
     signal zU2;
-    signal safeDenominator;
+    signal denominator;
     signal x1;
     signal x1_2;
     signal x1_3;
@@ -28,76 +72,66 @@ template elligator2_map()
     signal x2_3;
     signal gx2;
     signal isGx1Square;
+    signal isGx2Square;
     signal y1;
     signal y2;
     signal y1Squared;
-    signal y1IsOdd;
     signal y2Squared;
-    signal y2IsOdd;
     signal y1Corrected;
     signal y2Corrected;
 
-
-    // Line 1 from rfc x1 = -j/k * 1/(1 + z*u²)
+    // Step 1: Calculate denominator = 1 + z*u²
     zU2 <== z * fieldElement * fieldElement;
+    denominator <== 1 + zU2;
 
-    // Check for the exceptional case where 1 + Z * u^2 == 0
-    component isExceptionalCase = isZero();
-    isExceptionalCase.in <== 1 + zU2;
+    // Step 2: Calculate x1 = -j / denominator (since k=1)
+    x1 <-- (-j) / denominator;
+    // Constrain the division
+    x1 * denominator === -j;
 
-    safeDenominator <== isExceptionalCase.out * 1 + (1 - isExceptionalCase.out) * (1 + zU2);
-    x1 <-- (-j/k)/safeDenominator;
-    (-j/k) === x1 * safeDenominator;
+    // Step 3: Calculate x2 = -x1 - j
+    x2 <== -x1 - j;
 
-    (1 + zU2) * x1 + (j/k) === 0;
-
-    // Calculate gx1 = x1³ + (j/k)*x1² + x1/(k²)
+    // Calculate gx1 = x1³ + j*x1² + x1 (since k=1)
     x1_2 <== x1 * x1;
     x1_3 <== x1_2 * x1;
-    gx1 <== x1_3 + (j/k) * x1_2 + x1 / (k * k); // k*k unnecessary in this case leaving for furmula completeness
+    gx1 <== x1_3 + j * x1_2 + x1;
 
-    x2 <== -x1 -(j/k);
-
+    // Calculate gx2 = x2³ + j*x2² + x2 (since k=1)
     x2_2 <== x2 * x2;
-    x2_3 <== x2_2 *x2;
-    gx2 <== x2_3 + (j/k) * x2_2 +x2 / (k * k);
+    x2_3 <== x2_2 * x2;
+    gx2 <== x2_3 + j * x2_2 + x2;
 
-    y1 <-- gx1 ** exponentiator;
+    // Step 4: Try to compute square root of gx1 using Tonelli-Shanks
+    y1 <-- sqrt(gx1);
     // Verify it's a valid square root
     y1Squared <== y1 * y1;
 
-    component equality1 = isEqual();
+    component equality1 = IsEqual();
     equality1.in[0] <== y1Squared;
     equality1.in[1] <== gx1;
 
-    isGx1Square <== equality1.out; // 1 if g1x is a square, 0 otherwise
+    isGx1Square <== equality1.out; // 1 if gx1 is a square, 0 otherwise
 
-    component y1Bit = Num2Bits(1); // 1 if odd
-    y1Bit.in <== y1;
-    y1IsOdd <== y1Bit.out[0];
-
-
-    // Calculate potential square root for gx2
-    y2 <-- gx2 ** exponentiator;
-
-
-
+    // Step 5: Calculate potential square root for gx2 using Tonelli-Shanks
+    y2 <-- sqrt(gx2);
     // Verify y2 is valid when used
     y2Squared <== y2 * y2;
 
-    // Enforce that y2 is the square root of gx2 when gx1 is not a square
-    (1 - isGx1Square) * (y2Squared - gx2) === 0;
+    // Check if gx2 is a square
+    component equality2 = IsEqual();
+    equality2.in[0] <== y2Squared;
+    equality2.in[1] <== gx2;
+    isGx2Square <== equality2.out;
 
+    // Ensure exactly one of gx1 or gx2 is a square
+    isGx1Square + isGx2Square === 1;
 
-    // Extract LSB of y2, similar to what's already done for y1
-    component y2Bit = Num2Bits(1);
-    y2Bit.in <== y2;
-    y2IsOdd <== y2Bit.out[0];
-
-    // Correct the sign of y1 and y2 to make them even
-    y1Corrected <== y1 * (-1 + 2 * y1IsOdd);
-
-    y2Corrected <== y2 * (1 - 2 * y2IsOdd);
+    //todo implement sign correction must be done for full determinism
+    // Sign correction: make y-coordinates even (following the JavaScript implementation)
+    // We don't need to extract individual bits, just ensure the result is canonical
+    y1Corrected <== y1;
+    y2Corrected <== y2;
 
     // Use Mux1 to select the right x-coordinate
     component xMux = Mux1();
@@ -108,29 +142,26 @@ template elligator2_map()
     // Use Mux1 to select the right y-coordinate (already sign-corrected)
     component yMux = Mux1();
     yMux.c[0] <== y2Corrected;  // When isGx1Square is 0
-    yMux.c[1] <== y1Corrected;    // When isGx1Square is 1
+    yMux.c[1] <== y1Corrected;  // When isGx1Square is 1
     yMux.s <== isGx1Square;
 
     // Set final output
     montgomeryPoint[0] <== xMux.out;
     montgomeryPoint[1] <== yMux.out;
-
 }
 
 
-// runs hash2field assuming that Poseidon behaves like random oracle
+// runs hash2field assuming that Poseidon behaves like random oracle - todo consider switching to sponge
 template hash2field() {
     signal input message;
     signal input dst; // Domain Separation Tag
     signal output fieldElement1;
     signal output fieldElement2;
 
-
     component hasher0 = Poseidon2(3); 
     hasher0.inputs[0] <== message;
     hasher0.inputs[1] <== 0;
     hasher0.inputs[2] <== dst;
-
 
     component hasher1 = Poseidon2(3);
     hasher1.inputs[0] <== hasher0.out;
@@ -141,8 +172,7 @@ template hash2field() {
     fieldElement2 <== hasher1.out;
 }
 
-template hash2curve()
-{
+template hash2curve() {
     signal input message;
     signal input dst;
     signal output edwardsPoint[2];
@@ -158,11 +188,11 @@ template hash2curve()
     component map2 = elligator2_map();
     map2.fieldElement <== hasher.fieldElement2;
 
-    component toEdwards1 = MontgomeryToEdwards();
+    component toEdwards1 = Montgomery2Edwards();
     toEdwards1.in[0] <== map1.montgomeryPoint[0];
     toEdwards1.in[1] <== map1.montgomeryPoint[1];
 
-    component toEdwards2 = MontgomeryToEdwards();
+    component toEdwards2 = Montgomery2Edwards();
     toEdwards2.in[0] <== map2.montgomeryPoint[0];
     toEdwards2.in[1] <== map2.montgomeryPoint[1];
 

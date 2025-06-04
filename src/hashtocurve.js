@@ -4,9 +4,9 @@ const babyJub = require("./babyjub");
 const poseidon = require("./poseidon2");
 
 
-const j = 168698;
-const k = 1;
-const z = 3;
+const j = 168698n;  // Convert to BigInt
+const k = 1n;      // Convert to BigInt  
+const z = 5n;      // Convert to BigInt (non-square)
 
 function hash2field(message, dst) {
   const fieldElement1 = poseidon([message, 0, dst]);
@@ -14,73 +14,138 @@ function hash2field(message, dst) {
   return {fieldElement1, fieldElement2};
 }
 
+// Tonelli-Shanks square root algorithm for Baby Jubjub field
+function sqrt(n, Fr) {
+  if (Fr.eq(n, 0n)) {
+    return 0n;
+  }
+
+  // Test that solution exists (Legendre symbol)
+  const legendreExponent = (Fr.p - 1n) / 2n;
+  const res = Fr.pow(n, legendreExponent);
+  if (!Fr.eq(res, 1n)) {
+    return null; // No square root exists
+  }
+
+  // Tonelli-Shanks constants for Baby Jubjub
+  const m = 28;
+  const c = 19103219067921713944291392827692070036145651957329286315305642004821462161904n;
+  let t = Fr.pow(n, 81540058820840996586704275553141814055101440848469862132140264610111n);
+  let r = Fr.pow(n, (81540058820840996586704275553141814055101440848469862132140264610111n + 1n) / 2n);
+  
+  let mVar = m;
+  let cVar = c;
+  
+  while (!Fr.eq(r, 0n) && !Fr.eq(t, 1n)) {
+    let sq = Fr.mul(t, t);
+    let i = 1;
+    while (!Fr.eq(sq, 1n)) {
+      i++;
+      sq = Fr.mul(sq, sq);
+    }
+
+    // b = c ^ (m-i-1)
+    let b = cVar;
+    for (let j = 0; j < mVar - i - 1; j++) {
+      b = Fr.mul(b, b);
+    }
+
+    mVar = i;
+    cVar = Fr.mul(b, b);
+    t = Fr.mul(t, cVar);
+    r = Fr.mul(r, b);
+  }
+
+  // Ensure we return the smaller root (even parity)
+  const halfP = Fr.p / 2n;
+  if (r > halfP) {
+    r = Fr.neg(r);
+  }
+
+  return r;
+}
+
 function elligator2Map(u) {
-  const Fr = new ZqField(babyJub.F.p);
-  const exp = (Fr.p + 1n) / 4n;
+  const Fr = new ZqField(babyJub.p);
+
+  // Convert u to field element to ensure proper type
+  u = Fr.e(u);
 
   // z * u^2
   const zU2 = Fr.mul(z, Fr.mul(u, u));
-  // Exceptional case when 1 + z*u^2 == 0
-  const isExc = Fr.eq(Fr.add(1n, zU2), 0n);
-  // safeDen = isExc ? 1 : 1 + zU2
-  const safeDen = isExc ? 1n : Fr.add(1n, zU2);
-  const denom = Fr.inv(safeDen);
+  
+  // Handle exceptional case when 1 + z*u^2 == 0
+  const denominator = Fr.add(1n, zU2);
+  const isExceptional = Fr.eq(denominator, 0n);
+  const safeDenominator = isExceptional ? z : denominator;
 
-  const jOverK = Fr.mul(j, Fr.inv(k));
-  const negJk = Fr.neg(jOverK);
-  // x1 = negJk / safeDen
-  const x1Calc = Fr.mul(negJk, denom);
-  const x1 = isExc ? negJk : x1Calc;
+  // x1 = -j / safeDenominator (since k=1)
+  const x1 = Fr.mul(Fr.neg(j), Fr.inv(safeDenominator));
 
-  // gx1 = x1^3 + (j/k)*x1^2 + x1/(k^2)
+  // x2 = -x1 - j
+  const x2 = Fr.sub(Fr.neg(x1), j);
+
+  // Calculate gx1 = x1³ + j*x1² + x1 (since k=1)
   const x1_2 = Fr.mul(x1, x1);
   const x1_3 = Fr.mul(x1_2, x1);
-  const gx1 = Fr.add(
-      Fr.add(x1_3, Fr.mul(jOverK, x1_2)),
-      Fr.mul(x1, Fr.inv(Fr.mul(k, k)))
-  );
+  const gx1 = Fr.add(Fr.add(x1_3, Fr.mul(j, x1_2)), x1);
 
-  // x2 = -x1 - j/k
-  const x2 = Fr.neg(Fr.add(x1, jOverK));
+  // Calculate gx2 = x2³ + j*x2² + x2 (since k=1)
   const x2_2 = Fr.mul(x2, x2);
   const x2_3 = Fr.mul(x2_2, x2);
-  const gx2 = Fr.add(
-      Fr.add(x2_3, Fr.mul(jOverK, x2_2)),
-      Fr.mul(x2, Fr.inv(Fr.mul(k, k)))
-  );
+  const gx2 = Fr.add(Fr.add(x2_3, Fr.mul(j, x2_2)), x2);
 
-  // Compute square roots
-  const y1 = Fr.pow(gx1, exp);
-  const y2 = Fr.pow(gx2, exp);
+  // Try square root of gx1 first
+  const y1 = sqrt(gx1, Fr);
+  const isGx1Square = y1 !== null;
 
-  // Check which root is valid
-  const ok1 = Fr.eq(Fr.mul(y1, y1), gx1);
-
-  // Sign correction to make output even
-  const y1Bit = Fr.e(y1) & 1n;
-  const y2Bit = Fr.e(y2) & 1n;
-  const y1c = Fr.mul(y1, Fr.sub(Fr.mul(2n, y1Bit), 1n));
-  const y2c = Fr.mul(y2, Fr.sub(1n, Fr.mul(2n, y2Bit)));
-
-  const x = ok1 ? x1 : x2;
-  const y = ok1 ? y1c : y2c;
-
-  return [x, y];
+  if (isGx1Square) {
+    return { x: x1, y: y1 };
+  } else {
+    // If gx1 is not a square, then gx2 must be (by the properties of Elligator)
+    const y2 = sqrt(gx2, Fr);
+    if (y2 === null) {
+      throw new Error("Neither gx1 nor gx2 is a square - this should not happen in elligator2Map");
+    }
+    return { x: x2, y: y2 };
+  }
 }
 
-async function hash2curve(message, dst) {
-  const [u1, u2] = hash2field(message, dst);
-  const P1 = elligator2Map(u1);
-  const P2 = elligator2Map(u2);
+function montgomeryToEdwards(xM, yM) {
+  const Fr = new ZqField(babyJub.p);
+  
+  // Ensure proper field element conversion
+  xM = Fr.e(xM);
+  yM = Fr.e(yM);
+  
+  // Convert from Montgomery (xM, yM) to Edwards (xE, yE)
+  // xE = xM / yM
+  // yE = (xM - 1) / (xM + 1)
+  
+  const xE = Fr.div(xM, yM);
+  const yE = Fr.div(Fr.sub(xM, 1n), Fr.add(xM, 1n));
+  
+  return [xE, yE];
+}
 
-  const E1 = babyJub.mulPointEscalar(babyJub.Base8, P1);
-  const E2 = babyJub.mulPointEscalar(babyJub.Base8, P2);
+function hash2curve(message, dst) {
+  const fieldElements = hash2field(message, dst);
+  const P1 = elligator2Map(fieldElements.fieldElement1);
+  const P2 = elligator2Map(fieldElements.fieldElement2);
+
+  // Convert Montgomery points to Edwards coordinates
+  const E1 = montgomeryToEdwards(P1.x, P1.y);
+  const E2 = montgomeryToEdwards(P2.x, P2.y);
+  
+  // Add the two Edwards points
   let R = babyJub.addPoint(E1, E2);
-  // Clear cofactor by doubling three times
+  
+  // Clear cofactor by multiplying by 8 (doubling three times)
   for (let i = 0; i < 3; i++) {
     R = babyJub.addPoint(R, R);
   }
-  return babyJub.toAffine(R);
+  
+  return R;
 }
 
-module.exports = { hash2field, elligator2Map, hash2curve };
+module.exports = { hash2field, elligator2Map, montgomeryToEdwards, hash2curve };
