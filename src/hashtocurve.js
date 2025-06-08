@@ -96,16 +96,23 @@ function elligator2Map(u) {
   const gx2 = Fr.add(Fr.add(x2_3, Fr.mul(j, x2_2)), x2);
 
   // Try square root of gx1 first
-  const y1 = sqrt(gx1, Fr);
+  let y1 = sqrt(gx1, Fr);
   const isGx1Square = y1 !== null;
 
   if (isGx1Square) {
+    // RFC 9380 Step 6: If gx1 is square, use y1 with sgn0(y) == 1 (odd)
+    if (y1 % 2n === 0n) {  // If even, negate to make odd
+      y1 = Fr.neg(y1);
+    }
     return { x: x1, y: y1 };
   } else {
-    // If gx1 is not a square, then gx2 must be (by the properties of Elligator)
-    const y2 = sqrt(gx2, Fr);
+    // RFC 9380 Step 7: If gx2 is square, use y2 with sgn0(y) == 0 (even)
+    let y2 = sqrt(gx2, Fr);
     if (y2 === null) {
       throw new Error("Neither gx1 nor gx2 is a square - this should not happen in elligator2Map");
+    }
+    if (y2 % 2n === 1n) {  // If odd, negate to make even
+      y2 = Fr.neg(y2);
     }
     return { x: x2, y: y2 };
   }

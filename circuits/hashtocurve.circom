@@ -77,6 +77,10 @@ template elligator2_map() {
     signal y2;
     signal y1Squared;
     signal y2Squared;
+    signal y1_lsb;
+    signal y1_even;
+    signal y2_lsb;
+    signal y2_even;
     signal y1Corrected;
     signal y2Corrected;
 
@@ -127,18 +131,41 @@ template elligator2_map() {
     // Ensure exactly one of gx1 or gx2 is a square
     isGx1Square + isGx2Square === 1;
 
-    //todo implement sign correction must be done for full determinism
-    // Sign correction: make y-coordinates even (following the JavaScript implementation)
-    // We don't need to extract individual bits, just ensure the result is canonical
-    y1Corrected <== y1;
-    y2Corrected <== y2;
 
+    // Apply sign correction to y1 and y2 individually
+    
+    // Extract LSB for y1
+    y1_even <-- y1 \ 2;
+    y1_lsb <== y1 - 2 * y1_even;
+    y1_lsb * (y1_lsb - 1) === 0;
+    2 * y1_even + y1_lsb === y1;
+    
+    // Apply sign correction to y1: make it odd (sgn0(y1) = 1)
+    component y1SignMux = Mux1();
+    y1SignMux.c[0] <== -y1;   // Negate if even (LSB = 0)
+    y1SignMux.c[1] <== y1;  // Keep if odd (LSB = 1)
+    y1SignMux.s <== y1_lsb;
+    y1Corrected <== y1SignMux.out;
+    
+    // Extract LSB for y2
+    y2_even <-- y2 \ 2;
+    y2_lsb <== y2 - 2 * y2_even;
+    y2_lsb * (y2_lsb - 1) === 0;
+    2 * y2_even + y2_lsb === y2;
+    
+    // Apply sign correction to y2: make it even (sgn0(y2) = 0)
+    component y2SignMux = Mux1();
+    y2SignMux.c[0] <== y2;   // Keep if even (LSB = 0)
+    y2SignMux.c[1] <== -y2;  // Negate if odd (LSB = 1)
+    y2SignMux.s <== y2_lsb;
+    y2Corrected <== y2SignMux.out;
+    
     // Use Mux1 to select the right x-coordinate
     component xMux = Mux1();
     xMux.c[0] <== x2;  // When isGx1Square is 0
     xMux.c[1] <== x1;  // When isGx1Square is 1
     xMux.s <== isGx1Square;
-
+    
     // Use Mux1 to select the right y-coordinate (already sign-corrected)
     component yMux = Mux1();
     yMux.c[0] <== y2Corrected;  // When isGx1Square is 0
